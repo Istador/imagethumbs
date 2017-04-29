@@ -1,0 +1,12 @@
+{
+	"name": "imagethumbs",
+	"version": "0.0.1",
+	"description": "resize image",
+	"author": "Robin C. Ladiges",
+	"license": "UNLICENSED",
+	"main": "main",
+	"dependencies": {
+		"sharp": "^0.17.3",
+		"async": "^2.3.0"
+	}
+}
