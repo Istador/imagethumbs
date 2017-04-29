@@ -36,16 +36,11 @@ var user_transform = (next) =>
 		.catch(error(next))
 
 var thumb_transform = ({dir: dir, w: w, h: h, f: f, q: q = q_default}, buffer, next) => 
-	mkdir(dir, (err) => {
-		if (err)
-			next(err)
-		else
-			sharp(buffer)
-				.pipe(f(w, h, q))
-				.toBuffer()
-				.then(then(next))
-				.catch(error(next))
-	})
+	sharp(buffer)
+		.pipe(f(w, h, q))
+		.toBuffer()
+		.then(then(next))
+		.catch(error(next))
 
 var upload = ({dir: dir}, buffer, next) =>
 	sharp(buffer)
@@ -61,6 +56,7 @@ async.waterfall(
 			8, 		// maxThreads
 			(thumb, next) => async.reflect(async.waterfall(
 				[
+					(next) => mkdir(thumb.dir, error(next)),
 					(next) => thumb_transform(thumb, buffer, next),
 					(buffer, next) => upload(thumb, buffer, next),
 				],
