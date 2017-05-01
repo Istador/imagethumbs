@@ -1,79 +1,83 @@
 'use strict'
 
+// includes
 var async = require('async')
 var mkdir = require('mkdirp')
 var sharp = require('sharp')
+var readFile = require('fs').readFile
+console.time('runtime')
+const { resize, extract, rotate, quality, format } = require('./strategies')
 
-const { resize, extract } = require('./strategies')
-const k = sharp.kernel;
-const i = sharp.interpolator;
-
-var q_default = { kernel: k.lanczos2, interpolator: i.bicubic }
-var q_nearest = { kernel: k.nearest, interpolator: i.nearest }
-var q_cubic = { kernel: k.cubic, interpolator: i.bicubic }
-var q_best = { kernel: k.lanczos3, interpolator: i.nohalo }
-
+// thumb sizes
 var thumbs = [
-	{ dir: 'thumbs/300x100/', w: 300, h: 100, f: resize.crop },
-	{ dir: 'thumbs/100x300/', w: 100, h: 300, f: resize.crop },
-	{ dir: 'thumbs/200x200/', w: 200, h: 200, f: resize.crop },
-	{ dir: 'thumbs/hs/',      w: 625, h: 400, f: resize.fit,  q: q_best    },
+	{ dir: 'thumbs/300x100/', steps: [ resize.crop(300, 100) ] },
+	{ dir: 'thumbs/100x300/', steps: [ resize.crop(100, 300) ] },
+	{ dir: 'thumbs/200x200/', steps: [ resize.crop(200, 200) ] },
+	{ dir: 'thumbs/hs/',      steps: [ resize.fit(625, 400, quality.best), format.jpeg(95) ], ext: 'jpg' },
 ]
 
+// parameters
 var fname = 'image.png'
 var thumbCoords = {} //{ x1: 0, y1: 0, x2: 720, y2: 720 }
 var rotation = 0
 
+// util
 var then = (next) => (buffer) => next(null, buffer)
 var error = (next) => (err) => next(err)
 
-var user_transform = (next) =>
-	sharp(fname)
-		.pipe(extract(thumbCoords))
-		.rotate((rotation + 360) % 360)
-		.toBuffer()
-		.then(then(next))
-		.catch(error(next))
+// combine full path with extension replace
+var path = (dir, fname, ext) =>
+	dir + ( ext ? fname.replace(/([^\.]+)$/, ext) : fname )
 
-var thumb_transform = ({dir: dir, w: w, h: h, f: f, q: q = q_default}, buffer, next) => 
-	sharp(buffer)
-		.pipe(f(w, h, q))
-		.toBuffer()
-		.then(then(next))
-		.catch(error(next))
+// user transform: extract & rotate
+var user_transform = (() => {
+	var pre = []
+	if (thumbCoords && Object.keys(thumbCoords).length !== 0) pre.push(extract(thumbCoords))
+	if (rotation) pre.push(rotate(rotation))
+	return ( pre.length ? (steps) => pre.concat(steps) : (steps) => steps )
+})()
 
-var upload = ({dir: dir}, buffer, next) =>
-	sharp(buffer)
-		.toFile(dir + fname)
+// resize
+var thumb_transform = ({dir: dir, steps: steps, ext: ext}, buffer, next) => {
+	var s = sharp(buffer)
+	user_transform(steps).forEach(step => step(s))
+	s
+		.toFile(path(dir, fname, ext))
 		.then(then(next))
 		.catch(error(next))
+}
 
 async.waterfall(
 	[
-		user_transform,
+		// load file
+		(next) => readFile(fname, next),
+		// concurrent processing
 		(buffer, next) => async.eachLimit(
 			thumbs, // collection
 			8, 		// maxThreads
-			(thumb, next) => async.reflect(async.waterfall(
+			// for each element in the collection
+			(thumb, next) => async.reflect(async.waterfall( // don'fail
 				[
+					// create directory
 					(next) => mkdir(thumb.dir, error(next)),
+					// generate thumbnauil
 					(next) => thumb_transform(thumb, buffer, next),
-					(buffer, next) => upload(thumb, buffer, next),
+					// upload thumbnail
+					//(buffer, next) => upload(thumb, buffer, next),
 				],
 				(err) => {
-					if (err) console.error('failed to generate /' + thumb.dir + fname)
-					else console.log('generated /' + thumb.dir + fname)
+					var p = path(thumb.dir, fname, thumb.ext)
+					if (err) console.error('failed to generate /' + p)
+					else console.log('generated /' + p)
 					next(err)
 				}
 			)),
-			(err) => {
-				if (err) console.error(err)
-				next(err)
-			}
+			next
 		),
 	],
 	(err) => {
 		if (err) console.error(err)
 		else console.log('success')
+		console.timeEnd('runtime')
 	}
 )
